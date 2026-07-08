@@ -734,6 +734,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
     print(f"  {runs_dir(home)/args.a/'transcript.md'}")
     print(f"  {runs_dir(home)/args.b/'transcript.md'}")
     print("\n※ 정량 지표는 참고용입니다. 최종 우열은 질의 A 의 성공기준에 비추어 판단하세요.")
+    print("※ 판정 기본값은 '무승부'입니다. 성공기준상 '확실하고 결정적인 우위'가 증명될 때만")
+    print("   승리로 올려 promote 하세요. 소폭 차이/재현 안 되는 우위/회귀 혼재는 무승부 →")
+    print("   baseline(본체) 유지. 접전이면 같은 variant 를 여러 번 run 해 안정성을 확인하세요.")
     return 0
 
 
