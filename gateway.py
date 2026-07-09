@@ -27,7 +27,7 @@ import connectors
 
 dotenv.load_dotenv()
 
-# 에이전트 작업 공간(파일/규칙 파일 위치). langchain-deepagents.py 와 동일 규칙으로 계산.
+# 에이전트 작업 공간(파일/규칙 파일 위치). langchain-deepagents.py 와 동일 규칙으로 계산..
 WORKSPACE = Path(os.getenv("WORKSPACE_DIR", "workspace")).expanduser().resolve()
 
 
