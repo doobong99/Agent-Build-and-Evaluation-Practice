@@ -39,6 +39,11 @@ import tempfile
 import time
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # ---------------------------------------------------------------------------
 # 공통 상수/유틸
 # ---------------------------------------------------------------------------
@@ -568,6 +573,13 @@ def cmd_edit(args: argparse.Namespace) -> int:
 _BACKSTOP_MARGIN_S = 60
 
 
+def _headless_subprocess_env() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k != "WORKSPACE_DIR"}
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
 def _run_headless_subprocess(repo: Path, variant: Path, ws: Path, out: Path,
                              query_file: Path, recursion_limit: int, timeout: int) -> tuple[int, str]:
     cmd = [
@@ -582,12 +594,21 @@ def _run_headless_subprocess(repo: Path, variant: Path, ws: Path, out: Path,
         "--deadline-s", str(timeout),
     ]
     # 부모 env 를 물려주되 WORKSPACE_DIR 는 헤드리스가 직접 설정하므로 제거.
-    env = {k: v for k, v in os.environ.items() if k != "WORKSPACE_DIR"}
+    # Windows 기본 cp949 콘솔에서도 자식 출력은 UTF-8로 안정적으로 수집한다.
+    env = _headless_subprocess_env()
     try:
         # 부모 timeout 은 자식 마감 + 여유. 자식이 정상적으로 부분 캡처를 남기면
         # 여기까지 오지 않고, 자식이 단일 스텝에 멈춰버린 경우에만 SIGKILL 백스톱.
-        proc = subprocess.run(cmd, cwd=str(variant), env=env, capture_output=True,
-                              text=True, timeout=timeout + _BACKSTOP_MARGIN_S)
+        proc = subprocess.run(
+            cmd,
+            cwd=str(variant),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout + _BACKSTOP_MARGIN_S,
+        )
         return proc.returncode, (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
     except subprocess.TimeoutExpired:
         return 124, (f"TIMEOUT: 자식이 마감({timeout}s)+백스톱({_BACKSTOP_MARGIN_S}s) 내에 "

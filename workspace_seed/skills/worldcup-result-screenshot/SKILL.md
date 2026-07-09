@@ -32,7 +32,7 @@ description: 사용자가 특정 날짜의 월드컵 경기 결과를 알고 싶
 2. Browser MCP로 네이버 페이지를 열고, 해당 날짜의 경기 결과를 찾는다.
 3. 필요한 화면만 캡처한다.
 4. Filesystem MCP로 이미지 파일을 저장한다.
-5. 저장 경로와 결과 요약을 사용자에게 전달한다.
+5. 저장 경로, 표시용 이미지 Markdown, 결과 요약을 사용자에게 전달한다.
 
 ## 저장 규칙
 - 저장 위치는 `workspace/screenshots/` 아래로 한다.
@@ -40,8 +40,12 @@ description: 사용자가 특정 날짜의 월드컵 경기 결과를 알고 싶
 - 이미지 크기는 1MB 이하로 유지한다.
 
 ## 출력
-- 생성된 이미지 파일 경로
+- 생성된 이미지 파일의 절대 경로
+- 스크립트가 출력한 `IMAGE_MARKDOWN:` 값
 - 짧은 요약 문구
+- 요청한 날짜에 경기가 없으면 `NO_MATCHES: 경기가 없는 날짜 입니다. 다른 날짜를 조회해 주세요` 와 `SCHEDULE_URL:` 을 출력한다. 이 경우 이미지는 표시하지 않고 전체 일정 링크를 함께 안내한다.
+
+브라우저 기반 채팅 UI에서는 `workspace/screenshots/...` 같은 로컬 상대 경로 이미지가 표시되지 않을 수 있다. 응답 화면에 이미지를 띄워야 할 때는 스크립트가 출력한 `IMAGE_MARKDOWN:` 줄을 그대로 사용한다. 일반적으로 이 값은 짧은 `http://127.0.0.1:8765/screenshots/...` URL이며, `SCREENSHOT_BASE_URL` 이 없을 때만 `data:image/png;base64,...` fallback을 사용한다.
 
 ## 실행 스크립트
 - 실제 실행은 `collect_worldcup_result.py` 를 사용한다.

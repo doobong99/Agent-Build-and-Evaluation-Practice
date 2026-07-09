@@ -9,10 +9,23 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import os
 import re
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
+
+
+NO_MATCHES_MESSAGE = "경기가 없는 날짜 입니다. 다른 날짜를 조회해 주세요"
+SCHEDULE_URL = "https://m.sports.naver.com/fifaworldcup2026/schedule"
+
+
+class NoMatchesForDate(RuntimeError):
+    def __init__(self, requested_date: str, loaded_date: str | None = None):
+        super().__init__(NO_MATCHES_MESSAGE)
+        self.requested_date = requested_date
+        self.loaded_date = loaded_date
 
 
 def resolve_date(raw: str, today: datetime | None = None) -> datetime:
@@ -57,12 +70,97 @@ def build_query(resolved: datetime) -> str:
 def build_output_path(raw: str, output: str | None, resolved: datetime) -> Path:
     if output:
         return Path(output).expanduser().resolve()
-    default_dir = Path("workspace/screenshots")
+    default_dir = Path(os.getenv("SCREENSHOT_DIR", "workspace/screenshots")).expanduser()
     default_dir.mkdir(parents=True, exist_ok=True)
     return default_dir / f"worldcup-{resolved.strftime('%Y%m%d')}.png"
 
 
-def capture_screenshot(target_url: str, output_path: Path, dry_run: bool = False) -> Path:
+def build_image_markdown(image_path: Path, base_url: str | None = None) -> str:
+    if base_url is None:
+        base_url = os.getenv("SCREENSHOT_BASE_URL")
+
+    if base_url:
+        image_url = f"{base_url.rstrip('/')}/{quote(image_path.name)}"
+        return f"![worldcup-result]({image_url})"
+
+    image_base64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"![worldcup-result](data:image/png;base64,{image_base64})"
+
+
+def loaded_schedule_date(page_url: str) -> str | None:
+    values = parse_qs(urlparse(page_url).query).get("date")
+    return values[0] if values else None
+
+
+def ensure_requested_date_available(requested_date: str, page_url: str) -> None:
+    loaded_date = loaded_schedule_date(page_url)
+    if loaded_date and loaded_date != requested_date:
+        raise NoMatchesForDate(requested_date=requested_date, loaded_date=loaded_date)
+
+
+def chromium_executable_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    configured = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+
+    roots: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        roots.append(Path(local_app_data) / "ms-playwright")
+
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        roots.append(Path(user_profile) / "AppData" / "Local" / "ms-playwright")
+
+    seen: set[str] = set()
+    unique_candidates: list[Path] = []
+    for candidate in candidates:
+        resolved = str(candidate)
+        if resolved not in seen:
+            seen.add(resolved)
+            unique_candidates.append(candidate)
+
+    for root in roots:
+        if not root.exists():
+            continue
+        for candidate in sorted(root.glob("chromium-*/chrome-win64/chrome.exe")):
+            resolved = str(candidate)
+            if resolved not in seen:
+                seen.add(resolved)
+                unique_candidates.append(candidate)
+
+    return unique_candidates
+
+
+def launch_chromium(playwright):
+    attempts: list[tuple[str, Exception]] = []
+
+    try:
+        return playwright.chromium.launch(headless=True)
+    except Exception as exc:
+        attempts.append(("Playwright 기본 headless shell", exc))
+
+    for executable in chromium_executable_candidates():
+        try:
+            return playwright.chromium.launch(headless=True, executable_path=str(executable))
+        except Exception as exc:
+            attempts.append((str(executable), exc))
+
+    detail = "\n".join(f"- {name}: {exc}" for name, exc in attempts)
+    raise RuntimeError(
+        "Chromium 실행에 실패했습니다. Windows 보안 정책이 chrome-headless-shell.exe 실행을 막는 경우가 있습니다. "
+        "일반 Chromium chrome.exe 재시도까지 실패했습니다.\n"
+        f"{detail}"
+    )
+
+
+def capture_screenshot(
+    target_url: str,
+    output_path: Path,
+    dry_run: bool = False,
+    expected_date: str | None = None,
+) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if dry_run:
@@ -77,14 +175,18 @@ def capture_screenshot(target_url: str, output_path: Path, dry_run: bool = False
         ) from exc
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 390, "height": 900})
-        page.goto(target_url, wait_until="networkidle")
-
+        browser = launch_chromium(p)
         try:
+            page = browser.new_page(viewport={"width": 390, "height": 900})
+            page.goto(target_url, wait_until="networkidle")
+            if expected_date:
+                ensure_requested_date_available(expected_date, page.url)
+
             page.wait_for_selector('div[class*="PanelDate_group"]', timeout=15000)
             schedule_container = page.locator('div[class*="PanelDate_group"]').first
             schedule_container.screenshot(path=str(output_path))
+        except NoMatchesForDate:
+            raise
         except Exception:
             page.screenshot(path=str(output_path), full_page=True)
         finally:
@@ -106,14 +208,29 @@ def main() -> None:
     output_path = build_output_path(args.date, args.output, resolved)
 
     try:
-        saved_path = capture_screenshot(page_url, output_path, dry_run=args.dry_run)
+        saved_path = capture_screenshot(
+            page_url,
+            output_path,
+            dry_run=args.dry_run,
+            expected_date=resolved.strftime("%Y-%m-%d"),
+        )
+    except NoMatchesForDate as exc:
+        print(f"DATE: {resolved.strftime('%Y-%m-%d')}")
+        print(f"PAGE_URL: {page_url}")
+        print(f"NO_MATCHES: {exc}")
+        if exc.loaded_date:
+            print(f"LOADED_DATE: {exc.loaded_date}")
+        print(f"SCHEDULE_URL: {SCHEDULE_URL}")
+        return
     except Exception as exc:
         raise SystemExit(f"실패: {exc}") from exc
 
-    print(f"날짜: {resolved.strftime('%Y-%m-%d')}")
-    print(f"페이지 URL: {page_url}")
-    print(f"검색어: {query}")
-    print(f"저장 경로: {saved_path}")
+    print(f"DATE: {resolved.strftime('%Y-%m-%d')}")
+    print(f"PAGE_URL: {page_url}")
+    print(f"QUERY: {query}")
+    print(f"SAVED_PATH: {saved_path.resolve()}")
+    if not args.dry_run:
+        print(f"IMAGE_MARKDOWN: {build_image_markdown(saved_path)}")
 
 
 if __name__ == "__main__":

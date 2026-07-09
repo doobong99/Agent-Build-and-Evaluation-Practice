@@ -17,6 +17,9 @@ langgraph.json 이 아래 `agent` 그래프를 참조한다.
 import json
 import os
 import sys
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import dotenv
@@ -96,6 +99,44 @@ model = init_chat_model(
 # WORKSPACE_DIR 환경변수로 바꿀 수 있다.
 WORKSPACE = Path(os.getenv("WORKSPACE_DIR", "workspace")).expanduser().resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
+SCREENSHOT_DIR = WORKSPACE / "screenshots"
+SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("SCREENSHOT_DIR", str(SCREENSHOT_DIR))
+
+
+class _QuietStaticHandler(SimpleHTTPRequestHandler):
+    def end_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+
+def _start_screenshot_server() -> str | None:
+    if os.getenv("SCREENSHOT_SERVER", "1") in ("0", "false", "False"):
+        return None
+
+    host = os.getenv("SCREENSHOT_SERVER_HOST", "127.0.0.1")
+    port = int(os.getenv("SCREENSHOT_SERVER_PORT", "8765"))
+    base_url = os.getenv("SCREENSHOT_BASE_URL", f"http://{host}:{port}/screenshots")
+    os.environ["SCREENSHOT_BASE_URL"] = base_url
+
+    handler = partial(_QuietStaticHandler, directory=str(WORKSPACE))
+    try:
+        server = ThreadingHTTPServer((host, port), handler)
+    except OSError as exc:
+        print(f"[screenshots] static server not started on {host}:{port}: {exc}")
+        return base_url
+
+    thread = threading.Thread(target=server.serve_forever, name="screenshot-static-server", daemon=True)
+    thread.start()
+    print(f"[screenshots] serving {SCREENSHOT_DIR} at {base_url}")
+    return base_url
+
+
+_start_screenshot_server()
 
 # 스킬 디렉터리(workspace/skills). 각 스킬은 SKILL.md(+ 스크립트)를 가진 하위 폴더다.
 # git 으로 관리되는 workspace_seed/skills/ 를 workspace/skills 로 매 실행 시 동기화한다.
@@ -349,7 +390,11 @@ When the user wants a World Cup match result screenshot for a specific date:
 
    The shell backend runs from the workspace directory, so do not prefix the command with `workspace/`.
    The application prepends the active Python runtime to PATH; use `python`, not `python3`.
-   After successful execution, return the image file path, a Markdown image such as `![월드컵 경기 결과](screenshots/worldcup-YYYYMMDD.png)`, and a one-line textual summary.
+   If the script prints `NO_MATCHES:`, do not show an image. Reply exactly with `경기가 없는 날짜 입니다. 다른 날짜를 조회해 주세요`, and include the script's `SCHEDULE_URL:` value as the World Cup full schedule link.
+   After successful execution, return the script's `SAVED_PATH:` value as the saved absolute image file path, then copy the script's `IMAGE_MARKDOWN:` value into the answer after removing only that label.
+   The image Markdown should normally use the short local HTTP URL printed by the script, such as `http://127.0.0.1:8765/screenshots/worldcup-YYYYMMDD.png`.
+   Do not convert that URL to a `data:image/png;base64,...` URI unless no `SCREENSHOT_BASE_URL` is available.
+   Do not create Markdown image links that point to `workspace/screenshots/...`, `screenshots/...`, or other local relative paths; browser-based chat UIs cannot display those paths.
    Do not expose raw shell logs unless the user asks for debugging details.
 
 If the date is ambiguous, ask only the minimum needed clarification before proceeding."""
