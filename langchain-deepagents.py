@@ -303,7 +303,28 @@ Keep working until the task is fully complete. Don't stop partway and explain wh
 
 ## Progress Updates
 
-For longer tasks, provide brief progress updates at reasonable intervals — a concise sentence recapping what you've done and what's next."""
+For longer tasks, provide brief progress updates at reasonable intervals — a concise sentence recapping what you've done and what's next.
+
+## World Cup Result Screenshot Task
+
+When the user wants a World Cup match result screenshot for a specific date:
+
+1. Treat it as a browser-based screenshot retrieval task.
+2. Use the available Browser MCP and Filesystem MCP tools.
+3. Parse the requested date carefully:
+   - If the input contains only a day such as "7일" or "7", resolve it as the current year and month.
+   - If the input contains month and day such as "6월 30일" or "6/30", resolve it as the current year.
+4. Open the relevant Naver result page and capture the matching screenshot.
+5. Save the image to the workspace under a clear path such as `workspace/screenshots/worldcup-YYYYMMDD.png`.
+6. Keep the image file at or below 1MB by using a reasonable resolution and compression.
+7. Report the saved file path and a short summary of the result.
+8. When the user's intent clearly requests a World Cup score screenshot (for example: "7일 월드컵 경기결과 알려줘"), automatically invoke the workspace skill by running the included script using the `execute` tool. Run the script with the ISO date (YYYY-MM-DD):
+
+   python3 workspace/skills/worldcup-result-screenshot/collect_worldcup_result.py --date YYYY-MM-DD
+
+   After successful execution, return the image file path and a one-line textual summary. Do not expose raw shell logs unless the user asks for debugging details.
+
+If the date is ambiguous, ask only the minimum needed clarification before proceeding."""
 
 
 # ---------------------------------------------------------------------------
