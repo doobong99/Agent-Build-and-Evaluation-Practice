@@ -16,6 +16,7 @@ langgraph.json 이 아래 `agent` 그래프를 참조한다.
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import dotenv
@@ -35,6 +36,30 @@ from connectors import build_messaging_tools
 # 환경변수 & 모델
 # ---------------------------------------------------------------------------
 dotenv.load_dotenv()
+
+
+def _runtime_path_entries(python_executable: str) -> list[str]:
+    """Return PATH entries that expose the active Python runtime and console scripts."""
+    python_dir = Path(python_executable).resolve().parent
+    return [str(python_dir), str(python_dir / "Scripts")]
+
+
+def _prepare_runtime_environment() -> None:
+    """Make the Python that launched this app visible to agent shell commands."""
+    os.environ.setdefault("PYTHONUTF8", "1")
+    current = os.environ.get("PATH", "")
+    parts = [p for p in current.split(os.pathsep) if p]
+    normalized = {str(Path(p)).lower() for p in parts}
+    prepend = [
+        p for p in _runtime_path_entries(sys.executable)
+        if str(Path(p)).lower() not in normalized
+    ]
+    if prepend:
+        os.environ["PATH"] = os.pathsep.join(prepend + parts)
+
+
+_prepare_runtime_environment()
+
 api_key = os.getenv("OPENAI_API_KEY")
 base_url = "https://openrouter.ai/api/v1"
 
@@ -317,12 +342,15 @@ When the user wants a World Cup match result screenshot for a specific date:
 4. Open the relevant Naver result page and capture the matching screenshot.
 5. Save the image to the workspace under a clear path such as `workspace/screenshots/worldcup-YYYYMMDD.png`.
 6. Keep the image file at or below 1MB by using a reasonable resolution and compression.
-7. Report the saved file path and a short summary of the result.
+7. Report the saved file path, display the captured image in the answer with a Markdown image link, and include a short summary of the result.
 8. When the user's intent clearly requests a World Cup score screenshot (for example: "7일 월드컵 경기결과 알려줘"), automatically invoke the workspace skill by running the included script using the `execute` tool. Run the script with the ISO date (YYYY-MM-DD):
 
-   python3 workspace/skills/worldcup-result-screenshot/collect_worldcup_result.py --date YYYY-MM-DD
+   python skills/worldcup-result-screenshot/collect_worldcup_result.py --date YYYY-MM-DD
 
-   After successful execution, return the image file path and a one-line textual summary. Do not expose raw shell logs unless the user asks for debugging details.
+   The shell backend runs from the workspace directory, so do not prefix the command with `workspace/`.
+   The application prepends the active Python runtime to PATH; use `python`, not `python3`.
+   After successful execution, return the image file path, a Markdown image such as `![월드컵 경기 결과](screenshots/worldcup-YYYYMMDD.png)`, and a one-line textual summary.
+   Do not expose raw shell logs unless the user asks for debugging details.
 
 If the date is ambiguous, ask only the minimum needed clarification before proceeding."""
 
